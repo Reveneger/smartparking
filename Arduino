@@ -1,0 +1,68 @@
+#include <SPI.h>
+#include <WiFiNINA.h>
+#include <ArduinoJson.h>
+
+const char ssid[] = "1234567890";
+const char pass[] = "1234567890";
+const char serverAddress[] = "ws://localhost:3000"; 
+const int serverPort = 3000; 
+
+WiFiClient client;
+int sensorPins[5] = {2, 3, 4, 5, 6};
+bool lastOccupancy[5] = {false}; 
+
+void setup() {
+  Serial.begin(9600);
+
+  if (WiFi.begin(ssid, pass) != WL_CONNECTED) {
+    Serial.println("Failed to connect to WiFi");
+    while (1);
+  }
+
+  Serial.println("Connected to WiFi");
+
+  for (int i = 0; i < 5; i++) {
+    pinMode(sensorPins[i], INPUT);
+  }
+}
+
+void loop() {
+  bool currentOccupancy[5];
+
+  for (int i = 0; i < 5; i++) {
+    currentOccupancy[i] = digitalRead(sensorPins[i]) == HIGH;
+  }
+
+  if (shouldSendUpdate(currentOccupancy)) {
+    sendParkingStatus(currentOccupancy);
+    memcpy(lastOccupancy, currentOccupancy, sizeof(currentOccupancy));
+  }
+
+  delay(1000);
+}
+
+bool shouldSendUpdate(bool currentOccupancy[]) {
+  for (int i = 0; i < 5; i++) {
+    if (currentOccupancy[i] != lastOccupancy[i]) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void sendParkingStatus(bool currentOccupancy[]) {
+  StaticJsonDocument<128> doc;
+
+  JsonArray status = doc.createNestedArray("status");
+  for (int i = 0; i < 5; i++) {
+    status.add(currentOccupancy[i] ? "occupied" : "free");
+  }
+
+  if (client.connect(serverAddress, serverPort)) {
+    serializeJson(doc, client);
+    client.println();
+    client.stop();
+  } else {
+    Serial.println("Failed to connect to server");
+  }
+}
