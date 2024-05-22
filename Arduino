@@ -1,26 +1,23 @@
-#include <SPI.h>
-#include <WiFiNINA.h>
-#include <ArduinoJson.h>
 
-const char ssid[] = "1234567890";
-const char pass[] = "1234567890";
-const char serverAddress[] = "ws://localhost:3000"; 
-const int serverPort = 3000; 
+#include <ESP8266WiFi.h>
+#include <ArduinoWebsockets.h>
 
-WiFiClient client;
-int sensorPins[5] = {2, 3, 4, 5, 6};
+using namespace websockets;
+
+const char* ssid = "1234567890"; 
+const char* password = "1234567890"; 
+const char* websocket_server = "ws://localhost:3000"; 
+
+WebsocketsClient client;
+const int sensorPins[5] = {2, 3, 4, 5, 6}; 
 bool lastOccupancy[5] = {false}; 
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200); 
+  connectToWifi(); 
+  connectToWebsocket(); 
 
-  if (WiFi.begin(ssid, pass) != WL_CONNECTED) {
-    Serial.println("Failed to connect to WiFi");
-    while (1);
-  }
-
-  Serial.println("Connected to WiFi");
-
+ 
   for (int i = 0; i < 5; i++) {
     pinMode(sensorPins[i], INPUT);
   }
@@ -29,16 +26,51 @@ void setup() {
 void loop() {
   bool currentOccupancy[5];
 
+ 
   for (int i = 0; i < 5; i++) {
     currentOccupancy[i] = digitalRead(sensorPins[i]) == HIGH;
   }
 
+  
   if (shouldSendUpdate(currentOccupancy)) {
     sendParkingStatus(currentOccupancy);
     memcpy(lastOccupancy, currentOccupancy, sizeof(currentOccupancy));
   }
 
-  delay(1000);
+  client.poll(); 
+  delay(1000); 
+}
+
+void connectToWifi() {
+  Serial.print("Connecting to WiFi");
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected");
+  Serial.println("IP Address: " + WiFi.localIP().toString());
+}
+
+void connectToWebsocket() {
+  
+  client.onEvent(webSocketEvent);
+  client.connect(websocket_server);
+  Serial.println("Connecting to WebSocket server.");
+}
+
+void webSocketEvent(WebsocketsEvent event, String data) {
+  
+  if(event == WebsocketsEvent::ConnectionOpened) {
+    Serial.println("Connnection to server opened");
+  } else if(event == WebsocketsEvent::ConnectionClosed) {
+    Serial.println("Connnection to server closed");
+    client.connect(websocket_server); 
+  } else if(event == WebsocketsEvent::GotPing) {
+    Serial.println("Received Ping!");
+  } else if(event == WebsocketsEvent::GotPong) {
+    Serial.println("Received Pong!");
+  }
 }
 
 bool shouldSendUpdate(bool currentOccupancy[]) {
@@ -51,18 +83,16 @@ bool shouldSendUpdate(bool currentOccupancy[]) {
 }
 
 void sendParkingStatus(bool currentOccupancy[]) {
-  StaticJsonDocument<128> doc;
+  String statusPayload = "{\"status\":[";
 
-  JsonArray status = doc.createNestedArray("status");
   for (int i = 0; i < 5; i++) {
-    status.add(currentOccupancy[i] ? "occupied" : "free");
+    statusPayload += (currentOccupancy[i] ? "true" : "false");
+    if (i < 4) {
+      statusPayload += ",";
+    }
   }
+  statusPayload += "]}";
 
-  if (client.connect(serverAddress, serverPort)) {
-    serializeJson(doc, client);
-    client.println();
-    client.stop();
-  } else {
-    Serial.println("Failed to connect to server");
-  }
+  client.send(statusPayload);
+  Serial.println("Sending parking status: " + statusPayload);
 }
